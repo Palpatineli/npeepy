@@ -10,7 +10,7 @@ Or go to http://www.isi.edu/~gregv/npeet.html
 """
 from typing import Optional, Tuple
 from scipy.spatial import cKDTree
-from scipy.special import digammm as ψ
+from scipy.special import digamma as ψ
 from math import log
 import numpy as np
 import warnings
@@ -90,7 +90,7 @@ def mutual_info(x, y, z=None, k=3, base=2):
     assert len(x) == len(y), "Arrays should have same length"
     assert k <= len(x) - 1, "Set k smaller than num. samples - 1"
     x, y = _format_sample(x), _format_sample(y)
-    points = np.hstack([x, y]) if z is None else np.hstack([x, y, z])
+    points = np.c_[x, y] if z is None else np.c_[x, y, z]
     distances = _neighbor(points, k)
     if z is None:
         return (ψ(k) + ψ(len(x)) - _ψ_avg(x, distances) - _ψ_avg(y, distances)) / log(base)
@@ -100,7 +100,7 @@ def mutual_info(x, y, z=None, k=3, base=2):
 
 def kl_divergence(x, x_prime, k=3, base=2):
     # type: (np.ndarray, np.ndarray, int, float) -> float
-    """ Estimate the KL divergence between two distributions
+    """Estimate the KL divergence between two distributions
     :math:`p(x)` and :math:`q(x)` from samples x, drawn from :math:`p(x)` and samples
     :math:`x'` drawn from :math:`q(x)`. The number of samples do no have to be the same.
     KL divergence is not symmetric.
@@ -209,7 +209,7 @@ def _ψ_avg(x, distances):
     """
     tree = cKDTree(x)
     # not including the boundary point is equivalent to +1 to n_x. as center point is included
-    return np.mean([ψ(len(tree.query_ball_point(x, dist, p=np.inf))) for dist in distances - 1E-15])
+    return np.mean([ψ(len(tree.query_ball_point(a, dist, p=np.inf))) for a, dist in zip(x, distances - 1E-15)])
 
 # TESTS
 def shuffle_test(measure,  # Callable[[np.ndarray, np.ndarray, Optional[np.ndarray]], float]

@@ -1,36 +1,63 @@
-#!/usr/bin/env python
-# Written by Greg Ver Steeg
-# See readme.pdf for documentation
-# Or go to http://www.isi.edu/~gregv/npeet.html
+"""Non-parametric Entropy Estimation Toolbox
 
-import scipy.spatial as ss
+This package contains Python code implementing several entropy estimation
+functions for both discrete and continuous variables.
+
+Written by Greg Ver Steeg
+
+See readme.pdf for documentation
+Or go to http://www.isi.edu/~gregv/npeet.html
+"""
+from typing import Optional, Tuple
+from scipy.spatial import cKDTree
 from scipy.special import digamma
 from math import log
 import numpy as np
-import random
 import warnings
 
+__all__ = ["entropy", "centropy", "mi", "cmi", "kldiv", "entropyd", "centropyd", "midd", "shuffle_test"]
 
 # CONTINUOUS ESTIMATORS
 
 def entropy(x, k=3, base=2):
-    """ The classic K-L k-nearest neighbor continuous entropy estimator
-        x should be a list of vectors, e.g. x = [[1.3], [3.7], [5.1], [2.4]]
-        if x is a one-dimensional scalar and we have four samples
+    # type: (np.ndarray, int, float) -> float
+    """ The classic K-L k-nearest neighbor continuous entropy estimator.
+    Estimates the (differential) entropy of :math:`x \in \mathbb{R}^{d_x}`
+    from samples :math:`x^{(i)}, i = 1, ..., N`. Differential entropy,
+    unlike discrete entropy, can be negative due to close neighbors having
+    negative distance.
+
+    Args:
+        ndarray[float] x: a list of vectors,
+            e.g. x = [[1.3], [3.7], [5.1], [2.4]]
+            if x is a one-dimensional scalar and we have four samples
+        int k: use k-th neighbor
+        float base: unit of the returned entropy
+    Returns:
+        float: in bit if base is 2, or nat if base is e
     """
     assert k <= len(x) - 1, "Set k smaller than num. samples - 1"
     x = np.asarray(x)
     n_elements, n_features = x.shape
     x = add_noise(x)
-    tree = ss.cKDTree(x)
+    tree = cKDTree(x)
     nn = query_neighbors(tree, x, k)
     const = digamma(n_elements) - digamma(k) + n_features * log(2)
     return (const + n_features * np.log(nn).mean()) / log(base)
 
 
 def centropy(x, y, k=3, base=2):
+    # type: (np.ndarray, np.ndarray, int, float) -> float
     """ The classic K-L k-nearest neighbor continuous entropy estimator for the
-        entropy of X conditioned on Y.
+    entropy of X **conditioned on Y**.
+
+    Args:
+        ndarray[vector] x, y: a list of vectors, e.g. x = [[1.3], [3.7], [5.1], [2.4]]
+            if x is a one-dimensional scalar and we have four samples
+        int k: use k-th neighbor
+        float base: unit of the returned entropy
+    Returns:
+        float: in bit if base is 2, or nat if base is e
     """
     xy = np.c_[x, y]
     entropy_union_xy = entropy(xy, k=k, base=base)
@@ -57,21 +84,25 @@ def corex(xs, ys, k=3, base=2):
 
 
 def mi(x, y, z=None, k=3, base=2):
-    """ Mutual information of x and y (conditioned on z if z is not None)
-        x, y should be a list of vectors, e.g. x = [[1.3], [3.7], [5.1], [2.4]]
-        if x is a one-dimensional scalar and we have four samples
+    # type: (np.ndarray, np.ndarray, Optional[np.ndarray], int, float) -> float
+    """ Estimate the mutual information between :math:`x \in \mathbb{R}^{d_x}`
+    and :math:`y \in \mathbb{R}^{d_y}` from samples import
+    :math:`x^{(i)}, y^{(i)}, i = 1, ..., N`, conditioned on z if z is not None.
+
+    Args:
+        ndarray[vector] x, y: a list of vectors, e.g. x = [[1.3], [3.7], [5.1], [2.4]]
+            if x is a one-dimensional scalar and we have four samples
+        ndarray[vector] z (, optional): a list of vectors with same length as x and y
+        int k: use k-th neighbor
+        float base: unit of entropy
+    Returns:
+        float: mutual information
     """
     assert len(x) == len(y), "Arrays should have same length"
     assert k <= len(x) - 1, "Set k smaller than num. samples - 1"
-    x, y = np.asarray(x), np.asarray(y)
-    x = add_noise(x)
-    y = add_noise(y)
-    points = [x, y]
-    if z is not None:
-        points.append(z)
-    points = np.hstack(points)
-    # Find nearest neighbors in joint space, p=inf means max-norm
-    tree = ss.cKDTree(points)
+    x, y = add_noise(np.asarray(x)), add_noise(np.asarray(y))
+    points = np.hstack([x, y]) if z is None else np.hstack([x, y, z])
+    tree = cKDTree(points)  # nearest neighbors in joint space, where p=inf means max-norm
     dvec = query_neighbors(tree, points, k)
     if z is None:
         a, b, c, d = avgdigamma(x, dvec), avgdigamma(y, dvec), digamma(k), digamma(len(x))
@@ -83,34 +114,58 @@ def mi(x, y, z=None, k=3, base=2):
 
 
 def cmi(x, y, z, k=3, base=2):
-    """ Mutual information of x and y, conditioned on z
-        Legacy function. Use mi(x, y, z) directly.
+    # type: (np.ndarray, np.ndarray, np.ndarray, int, float) -> float
+    """ Estimate the mutual information between :math:`x \in \mathbb{R}^{d_x}`
+    and :math:`y \in \mathbb{R}^{d_y}` from samples import
+    :math:`x^{(i)}, y^{(i)}, i = 1, ..., N`, conditioned on z.
+
+    Args:
+        ndarray[vector] x, y: a list of vectors, e.g. x = [[1.3], [3.7], [5.1], [2.4]]
+            if x is a one-dimensional scalar and we have four samples
+        ndarray[vector] z: a list of vectors with same length as x and y
+        int k: use k-th neighbor
+        float base: unit of entropy
+    Returns:
+        float: mutual information
     """
     return mi(x, y, z=z, k=k, base=base)
 
 
-def kldiv(x, xp, k=3, base=2):
-    """ KL Divergence between p and q for x~p(x), xp~q(x)
-        x, xp should be a list of vectors, e.g. x = [[1.3], [3.7], [5.1], [2.4]]
-        if x is a one-dimensional scalar and we have four samples
+def kldiv(x, x_prime, k=3, base=2):
+    # type: (np.ndarray, np.ndarray, int, float) -> float
+    """ Estimate the KL divergence between two distributions
+    :math:`p(x)` and :math:`q(x)` from samples x, drawn from :math:`p(x)` and samples
+    :math:`x'` drawn from :math:`q(x)`. The number of samples do no have to be the same.
+    KL divergence is not symmetric.
+
+    Args:
+        np.ndarray[vector] x, x_prime: list of vectors, e.g. x = [[1.3], [3.7], [5.1], [2.4]]
+            if x is a one-dimensional scalar and we have four samples
+        int k: use k-th neighbor
+        float base: unit of entropy
+    Returns:
+        float: divergence
     """
-    assert k < min(len(x), len(xp)), "Set k smaller than num. samples - 1"
-    assert len(x[0]) == len(xp[0]), "Two distributions must have same dim."
-    d = len(x[0])
-    n = len(x)
-    m = len(xp)
+    assert k < min(len(x), len(x_prime)), "Set k smaller than num. samples - 1"
+    assert len(x[0]) == len(x_prime[0]), "Two distributions must have same dim."
+    n, d, m = len(x), len(x[0]), len(x_prime)
     const = log(m) - log(n - 1)
-    tree = ss.cKDTree(x)
-    treep = ss.cKDTree(xp)
-    nn = query_neighbors(tree, x, k)
-    nnp = query_neighbors(treep, x, k - 1)
+    tree, treep = cKDTree(x), cKDTree(x_prime)
+    nn, nnp = query_neighbors(tree, x, k), query_neighbors(treep, x, k - 1)
     return (const + d * (np.log(nnp).mean() - np.log(nn).mean())) / log(base)
 
 
 # DISCRETE ESTIMATORS
 def entropyd(sx, base=2):
-    """ Discrete entropy estimator
-        sx is a list of samples
+    # type: (np.ndarray, float) -> float
+    """Estimates entropy given a list of samples of discrete variable x.
+    where :math:`\hat{p} = \\frac{count}{total\:number}`
+
+    Args:
+        np.array[vector] sx: a list of samples
+        float base: unit of entropy
+    Returns:
+        float: entropy
     """
     unique, count = np.unique(sx, return_counts=True, axis=0)
     proba = count / len(sx)
@@ -118,16 +173,26 @@ def entropyd(sx, base=2):
 
 
 def midd(x, y, base=2):
-    """ Discrete mutual information estimator
-        Given a list of samples which can be any hashable object
+    # type: (np.ndarray, np.ndarray, float) -> float
+    """Estimates the mutual information between discrete variables x and y
+
+    Args:
+        x, y: list of samples which can be any hashable object
+    Returns:
+        float: mutual information
     """
     assert len(x) == len(y), "Arrays should have same length"
     return entropyd(x, base) - centropyd(x, y, base)
 
 
 def cmidd(x, y, z, base=2):
-    """ Discrete mutual information estimator
-        Given a list of samples which can be any hashable object
+    # type: (np.ndarray, np.ndarray, np.ndarray, float) -> float
+    """Estimates mutual information between discrete variables X and Y conditioned on Z
+
+    Args:
+        x, y, z: list of samples which can be any hashable object
+    Returns:
+        float: conditional entropy
     """
     assert len(x) == len(y) == len(z), "Arrays should have same length"
     xz = np.c_[x, z]
@@ -137,8 +202,13 @@ def cmidd(x, y, z, base=2):
 
 
 def centropyd(x, y, base=2):
-    """ The classic K-L k-nearest neighbor continuous entropy estimator for the
-        entropy of X conditioned on Y.
+    # type: (np.ndarray, np.ndarray, float) -> float
+    """ Estimates entropy for samples from discrete variable X conditioned on
+    discrete variable Y
+    Args:
+        ndarray[obj] x, y: list of samples which can be any hashable object
+    Returns:
+        float: conditional entropy
     """
     xy = np.c_[x, y]
     return entropyd(xy, base) - entropyd(y, base)
@@ -164,7 +234,18 @@ def corexd(xs, ys, base=2):
 
 # MIXED ESTIMATORS
 def micd(x, y, k=3, base=2, warning=True):
-    """ If x is continuous and y is discrete, compute mutual information
+    # type: (np.ndarray, np.ndarray, int, float, bool) -> float
+    """Estimates the mutual information between a continuous variable :math:`x \in \mathbb{R}^{d_x}`
+    and a discrete variable y. Note that mutual information is symmetric, but you must pass the
+    continuous variable first.
+
+    Args:
+        ndarray[vector] x: list of samples from continuous random variable X, ndarray of vector
+        ndarray[vector] y: list of samples from discrete random variable Y, ndarray of vector
+        int k: k-th neighbor
+        bool warning: provide warning for insufficient data
+    Returns:
+        float: mutual information
     """
     assert len(x) == len(y), "Arrays should have same length"
     entropy_x = entropy(x, k, base)
@@ -230,7 +311,7 @@ def avgdigamma(points, dvec):
     # This part finds number of neighbors in some radius in the marginal space
     # returns expectation value of <psi(nx)>
     n_elements = len(points)
-    tree = ss.cKDTree(points)
+    tree = cKDTree(points)
     avg = 0.
     dvec = dvec - 1e-15
     for point, dist in zip(points, dvec):
@@ -243,21 +324,36 @@ def avgdigamma(points, dvec):
 
 # TESTS
 
-def shuffle_test(measure, x, y, z=False, ns=200, ci=0.95, **kwargs):
-    """ Shuffle test
-        Repeatedly shuffle the x-values and then estimate measure(x, y, [z]).
-        Returns the mean and conf. interval ('ci=0.95' default) over 'ns' runs.
-        'measure' could me mi, cmi, e.g. Keyword arguments can be passed.
-        Mutual information and CMI should have a mean near zero.
+def shuffle_test(measure,  # Callable[[np.ndarray, np.ndarray, Optional[np.ndarray]], float]
+                 x,  # np.ndarray
+                 y,  # np.ndarray
+                 z=None,  # Optional[np.ndarray]
+                 ns=200,  # int
+                 ci=0.95,  # floatt
+                 **kwargs):
+    # type: (...) -> Tuple[float, Tuple[float, float]]
+    """Shuffle the x's so that they are uncorrelated with y,
+    then estimates whichever information measure you specify with 'measure'.
+    e.g., mutual information with mi would return the average mutual information
+    (which should be near zero, because of the shuffling) along with the confidence
+    interval. This gives a good sense of numerical error and, particular, if your
+    measured correlations are stronger than would occur by chance.
+
+    Args:
+        (ndarray,ndarray,Optiona[ndarray])->float measure: the function
+        ndarray x, y: x and y for measure
+        ndarray z: if measure takes z, then z is given here
+        int ns: number of shuffles
+        float ci: two-side confidence interval
+        kwargs: other parameters for measure
+    Returns:
+        (float,(float,float)): average_value, (lower_confidence, upper_confidence)
     """
     x_clone = np.copy(x)  # A copy that we can shuffle
     outputs = []
     for i in range(ns):
         np.random.shuffle(x_clone)
-        if z:
-            outputs.append(measure(x_clone, y, z, **kwargs))
-        else:
-            outputs.append(measure(x_clone, y, **kwargs))
+        outputs.append((measure(x_clone, y, z, **kwargs) if z else measure(x_clone, y, **kwargs)))
     outputs.sort()
     return np.mean(outputs), (outputs[int((1. - ci) / 2 * ns)], outputs[int((1. + ci) / 2 * ns)])
 

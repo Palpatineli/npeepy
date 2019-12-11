@@ -19,9 +19,9 @@ __all__ = ["entropy", "mutual_info", "mutual_info_mixed", "kl_divergence", "shuf
 
 # CONTINUOUS ESTIMATORS
 
-def _format_sample(x):
-    # type: (np.ndarray) -> np.ndarray
-    x = _jitter(np.asarray(x))
+def _format_sample(x, jitter=True):
+    # type: (np.ndarray, bool) -> np.ndarray
+    x = _jitter(np.asarray(x)) if jitter else np.asarray(x)
     assert x.ndim < 3, "x can only be 1D or 2D"
     if x.ndim == 1:
         x = x.reshape(-1, 1)
@@ -87,16 +87,19 @@ def mutual_info(x, y, z=None, k=3, base=2):
     Returns:
         float: mutual information
     """
-    assert len(x) == len(y), "Arrays should have same length"
-    assert k <= len(x) - 1, "Set k smaller than num. samples - 1"
+    assert len(x) == len(y), f"Arrays must have same length: len(x) = {len(x)}, len(y) = {len(y)}"
+    assert k <= len(x) - 1, f"Set k smaller than num. samples - 1, k = {k}, len(x) = {len(x)}"
     x, y = _format_sample(x), _format_sample(y)
-    points = np.c_[x, y] if z is None else np.c_[x, y, z]
-    distances = _neighbor(points, k)
     if z is None:
-        return (ψ(k) + ψ(len(x)) - _ψ_avg(x, distances) - _ψ_avg(y, distances)) / log(base)
+        points = np.c_[x, y]
+        distances = _neighbor(points, k)
+        return ((ψ(k) + ψ(len(x)) - _ψ_avg(x, distances) - _ψ_avg(y, distances)) / log(base)).clip(0, None)
     else:
-        return (_ψ_avg(z, distances) + ψ(k)
-                - _ψ_avg(np.c_[x, z], distances) - _ψ_avg(np.c_[y, z], distances)) / log(base)
+        z = _format_sample(z, jitter=False)
+        points = np.c_[x, y, z]
+        distances = _neighbor(points, k)
+        return ((_ψ_avg(z, distances) + ψ(k)
+                 - _ψ_avg(np.c_[x, z], distances) - _ψ_avg(np.c_[y, z], distances)) / log(base)).clip(0, None)
 
 def kl_divergence(x, x_prime, k=3, base=2):
     # type: (np.ndarray, np.ndarray, int, float) -> float
